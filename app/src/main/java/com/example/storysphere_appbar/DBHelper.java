@@ -21,8 +21,8 @@ public class DBHelper extends SQLiteOpenHelper {
     public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         onUpgrade(db, oldVersion, newVersion);
     }
-    // สร้างตาราง episodes ถ้ายังไม่มี (ใช้ชื่อคงเดิม: TABLE_EPISODES/TABLE_WRITINGS)
-    // สร้างตาราง episodes สคีมาใหม่ (TEXT + FK → TABLE_WRITINGS)
+
+    // [UNCHANGED] ตัวช่วยสร้างตารางตอน
     public void ensureEpisodesTable() {
         SQLiteDatabase db = getWritableDatabase();
         db.execSQL(
@@ -40,26 +40,21 @@ public class DBHelper extends SQLiteOpenHelper {
         );
     }
 
-
     public DBHelper(Context context) {
         super(context, DATABASE_NAME, null, 7);
     }
 
-    // ✅ ใช้ไฟล์ฐานข้อมูลจาก assets → ไม่สร้างตารางซ้ำ
     @Override
     public void onCreate(SQLiteDatabase db) {
         // no-op: ใช้สคีมาจากไฟล์ SPdb.db
     }
 
-    // ✅ ไม่แก้สคีมาจากโค้ด เพื่อไม่ชนกับไฟล์จริง
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        // อนุญาต FK ขณะไมเกรต
         db.execSQL("PRAGMA foreign_keys=OFF;");
         db.beginTransaction();
         try {
             if (oldVersion < 7) {
-                // สร้างตารางใหม่ตามสคีมาใหม่
                 db.execSQL(
                         "CREATE TABLE IF NOT EXISTS episodes_new (" +
                                 "episode_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
@@ -74,8 +69,7 @@ public class DBHelper extends SQLiteOpenHelper {
                                 ")"
                 );
 
-                // คัดลอกข้อมูลจากตาราง episodes เก่าหากมี
-                // รองรับทุกกรณี: มีคอลัมน์ is_private/created_at/updated_at หรือไม่มี
+                // [NOTE] ทำงานได้ – ถ้าจะให้อ่านง่าย แนะนำใช้ EXISTS(...) แทน =1
                 db.execSQL(
                         "INSERT INTO episodes_new (" +
                                 "episode_id, writing_id, title, content_html, privacy_settings, episode_no, created_at_text, updated_at_text" +
@@ -85,14 +79,12 @@ public class DBHelper extends SQLiteOpenHelper {
                                 "writing_id, " +
                                 "title, " +
                                 "content_html, " +
-                                // map is_private (0/1) → 'public'/'private' ถ้ามี; ถ้ามี privacy_settings แล้วให้ใช้เลย
                                 "CASE " +
                                 "WHEN (SELECT 1 FROM pragma_table_info('episodes') WHERE name='privacy_settings') = 1 THEN privacy_settings " +
                                 "WHEN (SELECT 1 FROM pragma_table_info('episodes') WHERE name='is_private') = 1 THEN CASE WHEN is_private=1 THEN 'private' ELSE 'public' END " +
                                 "ELSE 'public' " +
                                 "END AS privacy_settings, " +
                                 "episode_no, " +
-                                // สร้างข้อความเวลา ถ้ามี created_at_text/updated_at_text ก็ใช้เลย
                                 "CASE " +
                                 "WHEN (SELECT 1 FROM pragma_table_info('episodes') WHERE name='created_at_text') = 1 THEN created_at_text " +
                                 "WHEN (SELECT 1 FROM pragma_table_info('episodes') WHERE name='created_at') = 1 THEN " +
@@ -108,7 +100,6 @@ public class DBHelper extends SQLiteOpenHelper {
                                 "FROM episodes"
                 );
 
-                // สลับตาราง
                 db.execSQL("DROP TABLE IF EXISTS episodes;");
                 db.execSQL("ALTER TABLE episodes_new RENAME TO episodes;");
             }
@@ -123,16 +114,29 @@ public class DBHelper extends SQLiteOpenHelper {
     public void onConfigure(SQLiteDatabase db) {
         super.onConfigure(db);
         db.setForeignKeyConstraintsEnabled(true);
+        // [ADDED] กันกรณีฐานข้อมูลจาก assets ขาดตาราง episodes
+        db.execSQL(
+                "CREATE TABLE IF NOT EXISTS " + TABLE_EPISODES + " (" +
+                        "episode_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                        "writing_id INTEGER NOT NULL, " +
+                        "title TEXT NOT NULL, " +
+                        "content_html TEXT NOT NULL, " +
+                        "privacy_settings TEXT NOT NULL CHECK(privacy_settings IN ('public','private')) DEFAULT 'public', " +
+                        "episode_no INTEGER, " +
+                        "created_at_text TEXT NOT NULL, " +
+                        "updated_at_text TEXT NOT NULL, " +
+                        "FOREIGN KEY (writing_id) REFERENCES " + TABLE_WRITINGS + "(id) ON DELETE CASCADE)"
+        );
     }
 
     // ======================== Users ========================
-    // ปลอดภัย: ถ้า email ว่าง ให้คืน null/false โดยไม่ยิง SQL
     public Cursor getUserByEmail(String email) {
         if (email == null || email.isEmpty()) return null;
         SQLiteDatabase db = this.getReadableDatabase();
         return db.rawQuery("SELECT * FROM " + TABLE_USERS + " WHERE email = ?", new String[]{ email });
     }
 
+    // อัปเดต username + password ด้วยอีเมล
     public boolean updateUser(String email, String newUsername, String newPassword) {
         if (email == null || email.isEmpty()) return false;
         SQLiteDatabase db = this.getWritableDatabase();
@@ -143,14 +147,25 @@ public class DBHelper extends SQLiteOpenHelper {
         return rows > 0;
     }
 
+    // (เผื่อหน้าที่อื่นเรียกใช้) อัปเดตพร้อมรูปโปรไฟล์
     public boolean updateUser(String email, String newUsername, String newPassword, String imageUri) {
         if (email == null || email.isEmpty()) return false;
         SQLiteDatabase db = this.getWritableDatabase();
         ContentValues values = new ContentValues();
         values.put("username", newUsername);
         values.put("password", newPassword);
-        if (imageUri != null) values.put("image_uri", imageUri);
+        if (imageUri != null) values.put("image_uri", imageUri);  // [ADDED] set เฉพาะเมื่อมีค่า
         int rows = db.update(TABLE_USERS, values, "email = ?", new String[]{ email });
+        return rows > 0;
+    }
+
+    // ===== [ADDED] ใช้ใน activity_forgot_pass =====
+    public boolean updateUserPassword(String email, String newPassword) {
+        if (email == null || email.isEmpty()) return false;
+        SQLiteDatabase db = this.getWritableDatabase();
+        ContentValues cv = new ContentValues();
+        cv.put("password", newPassword);
+        int rows = db.update(TABLE_USERS, cv, "email = ?", new String[]{ email });
         return rows > 0;
     }
 
@@ -159,6 +174,7 @@ public class DBHelper extends SQLiteOpenHelper {
         SQLiteDatabase db = this.getWritableDatabase();
         return db.delete(TABLE_USERS, "email = ?", new String[]{ email }) > 0;
     }
+
     public boolean insertUser(String username, String email, String password) {
         SQLiteDatabase db = this.getWritableDatabase();
         ContentValues values = new ContentValues();
@@ -203,8 +219,13 @@ public class DBHelper extends SQLiteOpenHelper {
                 String content = cursor.getString(cursor.getColumnIndexOrThrow("content"));
 
                 WritingItem item = new WritingItem(id, title, tagline, tag, category, imagePath);
-                // ถ้าต้องการเก็บ content ใน item ใช้ setter ที่คุณมีอยู่
-                item.setTag(content);
+                // [FIX] เดิมใช้ item.setTag(content); ทำให้ tag ถูกทับด้วย content
+                // ถ้า WritingItem มี setContent ให้ใช้ด้านล่าง:
+                // item.setContent(content);
+                // ถ้ายังไม่มีเมทอด setContent ให้คอมเมนต์ทิ้งไว้ก่อน
+                // --- เริ่มทางเลือกปลอดภัย ---
+                // (ไม่ทำอะไรกับ content เพื่อนไม่ให้ทับ tag)
+                // --- จบทางเลือกปลอดภัย ---
                 writingList.add(item);
             } while (cursor.moveToNext());
         }
@@ -231,7 +252,6 @@ public class DBHelper extends SQLiteOpenHelper {
         return db.rawQuery("SELECT * FROM " + TABLE_WRITINGS + " WHERE id = ?", new String[]{String.valueOf(id)});
     }
 
-    // 📌 เพิ่ม method นี้เข้าไปใน DBHelper (คงชื่อเดิม)
     public boolean insertBook(String title, String imageUri) {
         SQLiteDatabase db = this.getWritableDatabase();
         ContentValues values = new ContentValues();
@@ -240,6 +260,7 @@ public class DBHelper extends SQLiteOpenHelper {
         long result = db.insert(TABLE_WRITINGS, null, values);
         return result != -1;
     }
+
     public boolean writingExists(int id) {
         SQLiteDatabase db = this.getReadableDatabase();
         try (Cursor c = db.rawQuery(
@@ -249,21 +270,18 @@ public class DBHelper extends SQLiteOpenHelper {
         }
     }
 
-    // ดึงนิยายตามแท็ก/หมวดแบบไม่สนตัวพิมพ์ และรองรับ tag ที่คั่นด้วยจุลภาค
     public List<WritingItem> getWritingItemsByTag(String rawTag, int limit) {
         if (rawTag == null) rawTag = "";
-        String norm = rawTag.trim().toLowerCase();       // "romance", "sci-fi", ...
-        String alt  = norm.replace("-", "");             // sci-fi -> scifi
+        String norm = rawTag.trim().toLowerCase();
+        String alt  = norm.replace("-", "");
 
         SQLiteDatabase db = getReadableDatabase();
         String sql =
                 "SELECT id, title, tagline, tag, category, image_path " +
                         "FROM " + TABLE_WRITINGS + " " +
                         "WHERE " +
-                        // เทียบ category ตรงตัว (ใส่ตัวพิมพ์เล็ก) และแบบตัดขีด
                         "  LOWER(IFNULL(category,'')) = ? " +
                         "  OR LOWER(REPLACE(IFNULL(category,''),'-','')) = ? " +
-                        // หาใน tag (คั่นด้วย ,) ป้องกันติดคำย่อย
                         "  OR (',' || LOWER(REPLACE(IFNULL(tag,''), ' ', '')) || ',') LIKE ? " +
                         "  OR (',' || LOWER(REPLACE(IFNULL(tag,''), ' ', '')) || ',') LIKE ? " +
                         "ORDER BY id DESC " +
@@ -289,7 +307,6 @@ public class DBHelper extends SQLiteOpenHelper {
         return list;
     }
 
-    // ดึงรายการล่าสุดทั้งหมด (ไว้ใช้กับ "You may also like" / "Top Chart" เบื้องต้น)
     public List<WritingItem> getRecentWritings(int limit) {
         SQLiteDatabase db = getReadableDatabase();
         String sql = "SELECT id, title, tagline, tag, category, image_path " +
@@ -319,15 +336,11 @@ public class DBHelper extends SQLiteOpenHelper {
         cv.put("writing_id", writingId);
         cv.put("title", title);
         cv.put("content_html", html);
-
-        // privacy_settings เป็นข้อความ
         cv.put("privacy_settings", isPrivate ? "private" : "public");
 
-        // เลขตอนถัดไป
         int nextNo = getMaxEpisodeNoForWriting(writingId) + 1;
         cv.put("episode_no", nextNo);
 
-        // เวลาเป็นข้อความ (GMT+7)
         java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("dd/MM/yy HH:mm:ss 'GMT+7'");
         f.setTimeZone(java.util.TimeZone.getTimeZone("GMT+7"));
         String nowText = f.format(new java.util.Date());
@@ -343,6 +356,7 @@ public class DBHelper extends SQLiteOpenHelper {
         }
         return rowId != -1;
     }
+
     public boolean updateEpisode(int episodeId, String title, String html, boolean isPrivate) {
         SQLiteDatabase db = this.getWritableDatabase();
         ContentValues cv = new ContentValues();
@@ -363,6 +377,7 @@ public class DBHelper extends SQLiteOpenHelper {
         SQLiteDatabase db = this.getWritableDatabase();
         return db.delete(TABLE_EPISODES, "episode_id=?", new String[]{String.valueOf(episodeId)}) > 0;
     }
+
     public List<Episode> getEpisodesByWritingId(int writingId) {
         List<Episode> list = new ArrayList<>();
         SQLiteDatabase db = this.getReadableDatabase();
@@ -382,7 +397,6 @@ public class DBHelper extends SQLiteOpenHelper {
                 String privacy = c.getString(4);
                 e.isPrivate   = "private".equalsIgnoreCase(privacy);
                 e.episodeNo   = c.isNull(5) ? 0 : c.getInt(5);
-                // created_at_text / updated_at_text เป็นข้อความ แต่ใน Episode เป็น long → ปล่อยเป็น 0
                 e.createdAt   = 0;
                 e.updatedAt   = 0;
                 list.add(e);
@@ -391,6 +405,7 @@ public class DBHelper extends SQLiteOpenHelper {
         }
         return list;
     }
+
     public Episode getEpisodeById(int episodeId) {
         SQLiteDatabase db = this.getReadableDatabase();
         Cursor c = db.rawQuery(
@@ -399,18 +414,22 @@ public class DBHelper extends SQLiteOpenHelper {
                 new String[]{ String.valueOf(episodeId) }
         );
         Episode e = null;
-        if (c != null && c.moveToFirst()) {
-            e = new Episode();
-            e.episodeId   = c.getInt(0);
-            e.writingId   = c.getInt(1);
-            e.title       = c.getString(2);
-            e.contentHtml = c.getString(3);
-            String privacy = c.getString(4);
-            e.isPrivate   = "private".equalsIgnoreCase(privacy);
-            e.episodeNo   = c.isNull(5) ? 0 : c.getInt(5);
-            e.createdAt   = 0;
-            e.updatedAt   = 0;
-            c.close();
+        // [FIX] ปิด Cursor ในทุกกรณี (เดิมปิดเฉพาะกรณี moveToFirst()==true)
+        try {
+            if (c != null && c.moveToFirst()) {
+                e = new Episode();
+                e.episodeId   = c.getInt(0);
+                e.writingId   = c.getInt(1);
+                e.title       = c.getString(2);
+                e.contentHtml = c.getString(3);
+                String privacy = c.getString(4);
+                e.isPrivate   = "private".equalsIgnoreCase(privacy);
+                e.episodeNo   = c.isNull(5) ? 0 : c.getInt(5);
+                e.createdAt   = 0;
+                e.updatedAt   = 0;
+            }
+        } finally {
+            if (c != null) c.close();
         }
         return e;
     }
@@ -466,7 +485,7 @@ public class DBHelper extends SQLiteOpenHelper {
             if (c != null) c.close();
         }
     }
-    // helper ตรวจว่าตารางมีคอลัมน์ไหม (เพิ่มไว้ในคลาส DBHelper ตำแหน่งไหนก็ได้)
+
     private boolean hasColumn(SQLiteDatabase db, String table, String column) {
         Cursor c = null;
         try {
@@ -481,7 +500,6 @@ public class DBHelper extends SQLiteOpenHelper {
         return false;
     }
 
-    // ===== Feed สำหรับหน้า ReadingMainActivity =====
     public static class EpisodeFeed {
         public int episodeId, writingId, episodeNo;
         public String episodeTitle, writingTitle;
@@ -494,7 +512,7 @@ public class DBHelper extends SQLiteOpenHelper {
                         "FROM " + TABLE_EPISODES + " e " +
                         "JOIN " + TABLE_WRITINGS + " w ON e.writing_id = w.id " +
                         "WHERE e.privacy_settings = 'public' " +
-                        "ORDER BY e.episode_id DESC"; // เรียงตอนล่าสุดก่อน
+                        "ORDER BY e.episode_id DESC";
         Cursor c = db.rawQuery(sql, null);
         List<EpisodeFeed> list = new ArrayList<>();
         try {
@@ -511,17 +529,14 @@ public class DBHelper extends SQLiteOpenHelper {
         return list;
     }
 
-    // --- Users ---
     public Cursor getUserByUsername(String username) {
         SQLiteDatabase db = this.getReadableDatabase();
         return db.rawQuery("SELECT * FROM " + TABLE_USERS + " WHERE username = ?", new String[]{username});
     }
 
-    // --- Writings by author username (fallback ถ้าไม่มีคอลัมน์ผูกผู้เขียน) ---
     public List<WritingItem> getWritingItemsByUsername(String username) {
         SQLiteDatabase db = getReadableDatabase();
 
-        // ตรวจว่ามีคอลัมน์อ้างผู้เขียนหรือไม่
         boolean hasAuthorUsername = hasColumn(db, TABLE_WRITINGS, "author_username");
         boolean hasAuthorEmail    = hasColumn(db, TABLE_WRITINGS, "author_email");
         boolean hasUserIdFk       = hasColumn(db, TABLE_WRITINGS, "user_id");
@@ -534,7 +549,6 @@ public class DBHelper extends SQLiteOpenHelper {
                 c = db.rawQuery("SELECT * FROM " + TABLE_WRITINGS + " WHERE author_username=? ORDER BY id DESC",
                         new String[]{ username });
             } else if (hasAuthorEmail) {
-                // กรณีฐานข้อมูลเก่าเก็บ email แต่เรามี username → map ผ่านตาราง User
                 String email = null;
                 Cursor u = getUserByUsername(username);
                 if (u != null && u.moveToFirst()) {
@@ -548,7 +562,6 @@ public class DBHelper extends SQLiteOpenHelper {
                             new String[]{ email });
                 }
             } else if (hasUserIdFk) {
-                // ถ้า WRITINGS ผูกกับ user_id
                 Integer userId = null;
                 Cursor u = db.rawQuery("SELECT id FROM " + TABLE_USERS + " WHERE username=? LIMIT 1",
                         new String[]{ username });
@@ -561,7 +574,6 @@ public class DBHelper extends SQLiteOpenHelper {
                 }
             }
 
-            // ถ้ายังหาไม่ได้ (ไม่มีคอลัมน์ผูกผู้เขียน) → fallback ทั้งหมด
             if (c == null) {
                 c = db.rawQuery("SELECT * FROM " + TABLE_WRITINGS + " ORDER BY id DESC", null);
             }
@@ -585,7 +597,6 @@ public class DBHelper extends SQLiteOpenHelper {
         return list;
     }
 
-    // helper ปลอดภัยเวลาคอลัมน์อาจไม่มี
     private String safeGet(Cursor c, String col) {
         int idx = c.getColumnIndex(col);
         return idx >= 0 ? c.getString(idx) : null;
