@@ -12,23 +12,20 @@ import java.util.List;
 
 public class DBHelper extends SQLiteOpenHelper {
 
-    // ใช้ชื่อ DB ให้ตรงกับของเพื่อน ลดปัญหาโค้ดส่วนอื่นอ้างชื่อ
+  
     public static final String DATABASE_NAME = "StorysphereDatabase.db";
-
-    // ใช้ชื่อ table ให้ตรงกับเพื่อน (ตัวพิมพ์เล็ก)
     public static final String TABLE_USERS = "users";
     public static final String TABLE_WRITINGS = "writings";
     public static final String TABLE_CURRENT_SESSION = "current_session";
     public static final String TABLE_EPISODES = "episodes";
 
-    // บวกเวอร์ชันขึ้นมา (>= เพื่อน) เพื่อให้ onUpgrade ทำงานชัดเจน
     private static final int DATABASE_VERSION = 7;
 
     public DBHelper(Context context) {
         super(context, DATABASE_NAME, null, DATABASE_VERSION);
     }
 
-    /*** สร้างตารางทั้งหมดตั้งแต่แรก (ไม่พึ่ง assets) ***/
+
     @Override
     public void onCreate(SQLiteDatabase db) {
         db.beginTransaction();
@@ -54,7 +51,7 @@ public class DBHelper extends SQLiteOpenHelper {
                     "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                     "user_email TEXT)");
 
-            // รวมสคีมา episodes ของคุณ
+
             db.execSQL("CREATE TABLE IF NOT EXISTS " + TABLE_EPISODES + " (" +
                     "episode_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                     "writing_id INTEGER NOT NULL, " +
@@ -67,7 +64,7 @@ public class DBHelper extends SQLiteOpenHelper {
                     "FOREIGN KEY (writing_id) REFERENCES " + TABLE_WRITINGS + "(id) ON DELETE CASCADE" +
                     ")");
 
-            // ดัชนีช่วย query
+
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_episodes_writing_id ON " + TABLE_EPISODES + "(writing_id)");
 
             db.setTransactionSuccessful();
@@ -76,10 +73,9 @@ public class DBHelper extends SQLiteOpenHelper {
         }
     }
 
-    /*** อัปเกรด schema แบบ “เติมของที่ขาด” เพื่อรองรับทั้ง DB เก่า/ใหม่ ***/
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        // ไล่เติมตามของเพื่อน
+  
         if (oldVersion < 3) {
             db.execSQL("ALTER TABLE " + TABLE_WRITINGS + " ADD COLUMN content TEXT");
         }
@@ -95,7 +91,7 @@ public class DBHelper extends SQLiteOpenHelper {
         if (oldVersion < 6) {
             db.execSQL("ALTER TABLE " + TABLE_USERS + " ADD COLUMN role TEXT DEFAULT 'user'");
         }
-        // ของคุณ: ให้แน่ใจว่ามีตาราง episodes เสมอ (และคอลัมน์ครบ)
+        
         if (oldVersion < 7) {
             db.execSQL("CREATE TABLE IF NOT EXISTS " + TABLE_EPISODES + " (" +
                     "episode_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
@@ -399,7 +395,6 @@ public class DBHelper extends SQLiteOpenHelper {
 
         SQLiteDatabase db = this.getReadableDatabase();
 
-        // ขั้นแรก: หาว่าตาราง writings มีคอลัมน์ไหนที่ใช้โยงผู้เขียน
         boolean hasAuthorUsername = hasColumn(db, TABLE_WRITINGS, "author_username");
         boolean hasAuthorEmail    = hasColumn(db, TABLE_WRITINGS, "author_email");
         boolean hasUserIdFk       = hasColumn(db, TABLE_WRITINGS, "user_id");
